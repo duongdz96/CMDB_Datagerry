@@ -55,11 +55,18 @@ from cmdb.models.right_model.isms_rights import (
     RiskRight,
     ControlMeasureRight,
     RiskAssessmentRight,
-    ControlMeasureAssignment,
+    ControlMeasureAssignmentRight,
+    IsmsReportRight,
 )
 from cmdb.models.right_model.export_rights import ExportRight, ExportObjectRight, ExportTypeRight
 from cmdb.models.right_model.docapi_rights import DocapiRight, DocapiTemplateRight
 # -------------------------------------------------------------------------------------------------------------------- #
+
+BASE_RIGHT = (
+    BaseRight(
+        Levels.NOTSET, GLOBAL_RIGHT_IDENTIFIER, description='Base application right'
+    ),
+)
 
 SYSTEM_RIGHTS = (
     SystemRight(GLOBAL_RIGHT_IDENTIFIER, description='System and settings'),
@@ -249,12 +256,20 @@ ISMS_RIGHTS = (
             RiskAssessmentRight('edit', Levels.PROTECTED, description='Edit ISMS RiskAssessments'),
             RiskAssessmentRight('delete', Levels.SECURE, description='Delete ISMS RiskAssessments'),
         ),
-        ControlMeasureAssignment(GLOBAL_RIGHT_IDENTIFIER, description='Manage ControlMeasure Assignments of ISMS'),
+        ControlMeasureAssignmentRight(GLOBAL_RIGHT_IDENTIFIER, description='Manage ControlMeasure Assignments of ISMS'),
         (
-            ControlMeasureAssignment('view', description='View ISMS ControlMeasure Assignments'),
-            ControlMeasureAssignment('add', description='Add ISMS ControlMeasure Assignments'),
-            ControlMeasureAssignment('edit', Levels.PROTECTED, description='Edit ISMS ControlMeasure Assignments'),
-            ControlMeasureAssignment('delete', Levels.SECURE, description='Delete ISMS ControlMeasure Assignments'),
+            ControlMeasureAssignmentRight('view', description='View ISMS ControlMeasure Assignments'),
+            ControlMeasureAssignmentRight('add', description='Add ISMS ControlMeasure Assignments'),
+            ControlMeasureAssignmentRight('edit', Levels.PROTECTED, description='Edit ISMS ControlMeasure Assignments'),
+            ControlMeasureAssignmentRight(
+                'delete',
+                Levels.SECURE,
+                description='Delete ISMS ControlMeasure Assignments'
+            ),
+        ),
+        IsmsReportRight(GLOBAL_RIGHT_IDENTIFIER, description='Manage Reports of ISMS'),
+        (
+            IsmsReportRight('view', description='View ISMS Reports'),
         ),
     ),
 )
@@ -330,11 +345,8 @@ DOCAPI_RIGHTS = (
     )
 )
 
-#TODO: fix this
-__all__ = (
-    BaseRight(
-        Levels.NOTSET, GLOBAL_RIGHT_IDENTIFIER, description='Base application right'
-    ),
+ALL_RIGHTS = (
+    BASE_RIGHT,
     SYSTEM_RIGHTS,
     FRAMEWORK_RIGHTS,
     EXPORT_RIGHTS,

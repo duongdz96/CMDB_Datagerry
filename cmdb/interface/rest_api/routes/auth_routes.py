@@ -31,7 +31,7 @@ from cmdb.manager import (
 )
 
 from cmdb.models.user_model import CmdbUser
-from cmdb.security.auth.auth_settings import AuthSettingsDAO
+from cmdb.models.security_models.auth_settings import CmdbAuthSettings
 from cmdb.security.auth.auth_module import AuthModule
 from cmdb.security.token.generator import TokenGenerator
 from cmdb.interface.rest_api.api_level_enum import ApiLevel
@@ -50,12 +50,13 @@ from cmdb.interface.rest_api.responses import DefaultResponse, LoginResponse
 from cmdb.errors.manager.users_manager import UsersManagerInsertError, UsersManagerGetError
 from cmdb.errors.provider import AuthenticationProviderNotActivated, AuthenticationProviderNotFoundError
 from cmdb.errors.security.security_errors import (
-    AuthSettingsInitError,
     InvalidCloudUserError,
     NoAccessTokenError,
     RequestTimeoutError,
     RequestError,
 )
+from cmdb.errors.database import DatabaseConnectionError
+from cmdb.errors.models.cmdb_auth_settings import AuthSettingsInitError
 # -------------------------------------------------------------------------------------------------------------------- #
 
 LOGGER = logging.getLogger(__name__)
@@ -90,9 +91,6 @@ def post_login():
         if 'subscription' in login_data:
             request_subscription = login_data['subscription']
 
-        users_manager = UsersManager(current_app.database_manager)
-        security_manager = SecurityManager(current_app.database_manager)
-
         try:
             if current_app.cloud_mode:
                 request_user_name = request_user_name.lower()
@@ -100,7 +98,7 @@ def post_login():
 
                 if not user_data:
                     LOGGER.error("[post_login] Could not retrieve User from ServicePortal!")
-                    abort(401, 'Could not login')
+                    abort(401, 'Invalid user data. Failed to login!')
 
                 user_database = None
 
@@ -134,17 +132,13 @@ def post_login():
                 # User does not exist
                 if not user:
                     LOGGER.error("[post_login] Could not retrieve User from database!")
-                    abort(401, 'Could not login!')
+                    abort(401, "Invalid user or password. Could not login!")
 
-                current_app.database_manager.connector.set_database(user_database)
                 token, token_issued_at, token_expire = generate_token_with_params(user,
                                                                                 current_app.database_manager,
                                                                                 True)
 
-                login_response = LoginResponse(user, token, token_issued_at, token_expire)
-
-                return login_response.make_response()
-
+                return LoginResponse(user, token, token_issued_at, token_expire).make_response()
         except HTTPException as http_err:
             raise http_err
         except NoAccessTokenError as err:
@@ -156,6 +150,9 @@ def post_login():
         except RequestTimeoutError as err:
             LOGGER.error("[post_login] RequestTimeoutError: %s", err)
             abort(500, "Login request timed out!")
+        except DatabaseConnectionError as err:
+            LOGGER.error("[post_login] DatabaseConnectionError: %s", err, exc_info=True)
+            abort(500, "Failed to establish a connection to the database!")
         except RequestError as err:
             LOGGER.error("[post_login] RequestError: %s", err)
             abort(500, "Login failed due a malformed request!")
@@ -165,11 +162,13 @@ def post_login():
         except UsersManagerInsertError as err:
             LOGGER.error("[post_login] UsersManagerInsertError: %s", err, exc_info=True)
             abort(500, "Could not login because user can't be inserted in database!")
-        except Exception as err: #pylint: disable=broad-exception-caught
+        except Exception as err:
             LOGGER.error("[post_login] Exception: %s, Type: %s", err, type(err), exc_info=True)
-            abort(500, "Could not login")
+            abort(500, "An internal server error occured while trying to login!")
 
         # PATH when its not cloud mode
+        users_manager = UsersManager(current_app.database_manager)
+        security_manager = SecurityManager(current_app.database_manager)
         settings_manager = SettingsManager(current_app.database_manager)
 
         auth_module = AuthModule(
@@ -336,7 +335,7 @@ def update_auth_settings(request_user: CmdbUser):
             abort(400, 'No new data was provided')
 
         try:
-            new_auth_setting_instance = AuthSettingsDAO(**new_auth_settings_values)
+            new_auth_setting_instance = CmdbAuthSettings(**new_auth_settings_values)
         except AuthSettingsInitError as err:
             LOGGER.error("[update_auth_settings] Error: %s", err)
             abort(500, "Could not initialise auth settings!")

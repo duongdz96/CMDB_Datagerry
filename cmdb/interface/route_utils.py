@@ -22,10 +22,13 @@ import functools
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Union, Optional
+from typing import Optional
+import time
 import requests
 from flask import request, abort, current_app
 from werkzeug._internal import _wsgi_decoding_dance
+
+from pymongo.errors import NetworkTimeout, AutoReconnect
 
 from cmdb.database.database_services import CollectionValidator, DatabaseUpdater
 from cmdb.manager import (
@@ -59,14 +62,31 @@ from cmdb.errors.manager.groups_manager import GroupsManagerGetError
 LOGGER = logging.getLogger(__name__)
 
 DEFAULT_MIME_TYPE = 'application/json'
-SERVICE_PORTAL_AUTH_URL = "https://service.datagerry.com/api/datagerry/auth"
-SERVICE_PORTAL_API_AUTH_URL = "https://service.datagerry.com/api/datagerry/auth/subscription"
-SERVICE_PORTAL_SYNC_URL = "https://service.datagerry.com/api/datagerry/config-item/update"
 
 # -------------------------------------------------------------------------------------------------------------------- #
 
 def user_has_right(required_right: str, request_user: CmdbUser = None) -> bool:
-    """Check if a user has a specific right"""
+    """
+    Determine whether a user has the specified access right
+
+    This function checks whether the user has the given `required_right` either via:
+    - A provided `CmdbUser` object (typically used in cloud API contexts), or
+    - A token extracted from the request's Authorization header in non-cloud or Open Source mode
+
+    The function supports both basic and extended rights and includes handling for token validation
+    and user/group resolution based on application mode (cloud or local).
+
+    Args:
+        required_right (str): The permission/right to verify
+        request_user (CmdbUser, optional): The user object (if already available). If not provided,
+                                           the user will be determined via the Authorization token
+
+    Returns:
+        bool: True if the user has the required right (or extended right), False otherwise
+
+    Raises:
+        Exception: If the token is missing or invalid (401 Unauthorized)
+    """
     # Check right for cloud api routes
     if request_user:
         return validate_right_cloud_api(required_right, request_user)
@@ -105,18 +125,33 @@ def user_has_right(required_right: str, request_user: CmdbUser = None) -> bool:
         return False
 
 
-#@deprecated
 def insert_request_user(func):
     """
-    Helper function which auto injects the user from the token request
+    Decorator that injects the authenticated user into a route handler as `request_user`
+
+    This decorator handles token extraction and validation from the `Authorization` header,
+    retrieves the user based on the token contents, and adds the `request_user` keyword argument
+    to the wrapped function. It supports both cloud and non-cloud modes
+
+    In cloud mode, requests with an `x-api-key` header are assumed to have already been authenticated
+    via a different mechanism and are passed through without further token validation
+
+    Args:
+        func (Callable): The route function to decorate
+
+    Returns:
+        Callable: The wrapped function with `request_user` injected, if authentication succeeds
+
+    Raises:
+        werkzeug.exceptions.HTTPException: Returns a 401 Unauthorized error if token validation fails
+                                           or the user cannot be resolved.
     """
     @functools.wraps(func)
     def get_request_user(*args, **kwargs):
-        # LOGGER.debug("insert_request_user() called")
         with current_app.app_context():
             users_manager = UsersManager(current_app.database_manager)
         try:
-            # If the request comes from API then the request user will be set in verify_api_access - method
+            # If the request comes from API then the request_user will be set in verify_api_access - method
             if current_app.cloud_mode and "x-api-key" in request.headers:
                 return func(*args, **kwargs)
 
@@ -125,11 +160,10 @@ def insert_request_user(func):
             with current_app.app_context():
                 decrypted_token = TokenValidator(current_app.database_manager).decode_token(token)
         except TokenValidationError:
-            #TODO: ERROR-FIX
-            abort(401)
+            abort(401, "Invalid Token!")
         except Exception as err:
-            LOGGER.debug("[insert_request_user] Token Exception: %s, Type: %s", err, type(err))
-            abort(401)
+            LOGGER.debug("[insert_request_user] Exception: %s, Type: %s", err, type(err), exc_info=True)
+            abort(401, "Token could not be validated!")
 
         try:
             user_id = decrypted_token['DATAGERRY']['value']['user']['public_id']
@@ -172,7 +206,6 @@ def verify_api_access(*, required_api_level: ApiLevel = None):
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            # LOGGER.debug("verify_api_access() called")
             if not current_app.cloud_mode:
                 return func(*args, **kwargs)
 
@@ -379,6 +412,7 @@ def parse_authorization_header(header):
                 username = username.decode("utf-8")
                 password = password.decode("utf-8")
 
+                db_name = None
                 if current_app.cloud_mode:
                     user_data = check_user_in_service_portal(username, password)
 
@@ -387,13 +421,13 @@ def parse_authorization_header(header):
 
                     if current_app.local_mode:
                         # Test API only with user with 1 subscription
-                        current_app.database_manager.connector.set_database(user_data['subscriptions'][0]['database'])
+                        db_name = user_data['subscriptions'][0]['database']
                     else:
-                        current_app.database_manager.connector.set_database(user_data['database'])
+                        db_name = user_data['database']
 
-                users_manager = UsersManager(current_app.database_manager)
-                security_manager = SecurityManager(current_app.database_manager)
-                settings_manager = SettingsManager(current_app.database_manager)
+                users_manager = UsersManager(current_app.database_manager, db_name)
+                security_manager = SecurityManager(current_app.database_manager, db_name)
+                settings_manager = SettingsManager(current_app.database_manager, db_name)
 
                 auth_settings = settings_manager.get_all_values_from_section('auth', AuthModule.__DEFAULT_SETTINGS__)
                 auth_module = AuthModule(auth_settings,
@@ -416,7 +450,6 @@ def parse_authorization_header(header):
 
                     if current_app.cloud_mode:
                         token_payload['user']['database'] = user_instance.database
-                        return tg.generate_token(payload=token_payload)
 
                     return tg.generate_token(payload=token_payload)
 
@@ -557,9 +590,8 @@ def init_db_routine(db_name: str) -> None:
 def set_admin_user(user_data: dict, subscription: dict):
     """Creates a new admin user"""
     with current_app.app_context():
-        current_app.database_manager.connector.set_database(subscription['database'])
-        users_manager = UsersManager(current_app.database_manager)
-        scm = SecurityManager(current_app.database_manager)
+        users_manager = UsersManager(current_app.database_manager, subscription['database'])
+        scm = SecurityManager(current_app.database_manager, subscription['database'])
 
     try:
         admin_user_from_db = None
@@ -593,8 +625,6 @@ def set_admin_user(user_data: dict, subscription: dict):
 
     except UsersManagerGetError as err:
         raise UsersManagerGetError(err) from err
-    except UsersManagerInsertError as err:
-        raise UsersManagerInsertError(err) from err
     except Exception as err:
         LOGGER.debug("[set_admin_user] Exception: %s, Type: %s", err, type(err))
         raise UsersManagerInsertError(err) from err
@@ -638,8 +668,7 @@ def delete_database(db_name: str) -> None:
     """
     try:
         with current_app.app_context():
-            current_app.database_manager.connector.set_database(db_name)
-            users_manager = UsersManager(current_app.database_manager)
+            users_manager = UsersManager(current_app.database_manager, db_name)
 
             users_manager.dbm.drop_database(db_name)
     except Exception as err:
@@ -660,7 +689,7 @@ def validate_subscrption_user(email: str, password: str, x_api_key: str = None) 
         "x-access-token": x_access_token
     }
 
-    target = SERVICE_PORTAL_AUTH_URL
+    target = os.getenv('SP_AUTH_URL')
 
     payload = {
         "email": email,
@@ -670,7 +699,7 @@ def validate_subscrption_user(email: str, password: str, x_api_key: str = None) 
     if x_api_key:
         payload['x-api-key'] = x_api_key
 
-        target = SERVICE_PORTAL_API_AUTH_URL
+        target = os.getenv('SP_API_AUTH_URL')
 
     try:
         response = requests.post(target, headers=headers, json=payload, timeout=3)
@@ -725,8 +754,10 @@ def sync_config_items(email: str, database: str, config_item_count: int) -> bool
         "config_item_count": config_item_count
     }
 
+    target = os.getenv('SP_CI_SYNC_URL')
+
     try:
-        response = requests.post(SERVICE_PORTAL_SYNC_URL, headers=headers, json=payload, timeout=3)
+        response = requests.post(target, headers=headers, json=payload, timeout=3)
 
         if response.status_code == 200:
             return True
@@ -735,3 +766,27 @@ def sync_config_items(email: str, database: str, config_item_count: int) -> bool
     except (requests.exceptions.Timeout, requests.exceptions.RequestException) as err:
         LOGGER.error("[sync_config_items] Request Error: %s. Type: %s", err, type(err))
         return False
+
+
+def mongo_retry(retries=3, delay=2):
+    """
+    Decorator to retry MongoDB operations in case of transient errors.
+    
+    Args:
+        retries (int): Number of retries
+        delay (int): Seconds between retries
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exception = None
+            for _ in range(retries):
+                try:
+                    return func(*args, **kwargs)
+                except (NetworkTimeout, AutoReconnect) as e:
+                    last_exception = e
+                    time.sleep(delay)
+            # After retries exhausted
+            raise last_exception
+        return wrapper
+    return decorator

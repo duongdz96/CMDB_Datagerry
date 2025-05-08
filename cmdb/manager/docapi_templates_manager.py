@@ -53,13 +53,10 @@ class DocapiTemplatesManager(BaseManager):
         Set the database connection for the DocapiTemplatesManager
 
         Args:
-            `dbm` (MongoDatabaseManager): Database interaction manager
-            `database` (str): Name of the database to which the 'dbm' should connect. Only used in CLOUD_MODE
+            dbm (MongoDatabaseManager): Database interaction manager
+            database (str): Name of the database to which the 'dbm' should connect. Only used in CLOUD_MODE
         """
-        if database:
-            dbm.connector.set_database(database)
-
-        super().__init__(DocapiTemplate.COLLECTION, dbm)
+        super().__init__(DocapiTemplate.COLLECTION, dbm, database)
 
 # --------------------------------------------------- CRUD - CREATE -------------------------------------------------- #
 
@@ -96,9 +93,8 @@ class DocapiTemplatesManager(BaseManager):
         Gets the next couter for the public_id from database and increases it
 
         Returns:
-            `int`: The next public_id for DocapiTemplate
+            int: The next public_id for DocapiTemplate
         """
-        #TODO: ERROR-FIX (try-catch-block)
         return self.get_next_public_id()
 
 
@@ -224,7 +220,6 @@ class DocapiTemplatesManager(BaseManager):
             elif isinstance(data, DocapiTemplate):
                 update_object = data
             else:
-                #TODO: ERROR-FIX (catch proper exception)
                 raise DocapiTemplatesManagerUpdateError("Could not initialise DocapiTemplate with given data!")
 
             ack = self.update(

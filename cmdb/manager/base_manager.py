@@ -55,7 +55,7 @@ class BaseManager:
     This is the base class for every FrameworkManager
     """
 
-    def __init__(self, collection: str, dbm: MongoDatabaseManager):
+    def __init__(self, collection: str, dbm: MongoDatabaseManager, db_name: str):
         """
         Initializes the class with a collection name and database manager
 
@@ -69,16 +69,10 @@ class BaseManager:
         try:
             self.collection = collection
             self.query_builder = BaseQueryBuilder()
-            self.dbm: MongoDatabaseManager = dbm
+            self.dbm = dbm
+            self.db_name = db_name if db_name else dbm.db_name
         except Exception as err:
             raise BaseManagerInitError(err) from err
-
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """
-        Auto disconnect the database connection when the Manager get destroyed
-        """
-        self.dbm.connector.disconnect()
 
 # --------------------------------------------------- CRUD - CREATE -------------------------------------------------- #
 
@@ -97,7 +91,7 @@ class BaseManager:
             int: The newly assigned public_id of the inserted document
         """
         try:
-            return self.dbm.insert(self.collection, data, skip_public)
+            return self.dbm.insert(self.collection, self.db_name, data, skip_public)
         except DocumentInsertError as err:
             raise BaseManagerInsertError(err) from err
 
@@ -150,7 +144,7 @@ class BaseManager:
             Optional[dict]: The found document or None if no document matches the query
         """
         try:
-            return self.dbm.find_one(self.collection, *args, **kwargs)
+            return self.dbm.find_one(self.collection, self.db_name, *args, **kwargs)
         except DocumentGetError as err:
             raise BaseManagerGetError(err) from err
 
@@ -170,7 +164,7 @@ class BaseManager:
             Optional[dict]: The found document as a dictionary or None if no document matches the query
         """
         try:
-            return self.dbm.find_one(collection, public_id)
+            return self.dbm.find_one(collection, self.db_name, public_id)
         except DocumentGetError as err:
             raise BaseManagerGetError(err) from err
 
@@ -203,9 +197,10 @@ class BaseManager:
             formatted_sort = [(sort, direction)]
 
             return self.dbm.find_all(collection=collection,
-                                    limit=limit,
-                                    filter=requirements_filter,
-                                    sort=formatted_sort)
+                                     db_name=self.db_name,
+                                     limit=limit,
+                                     filter=requirements_filter,
+                                     sort=formatted_sort)
         except DocumentGetError as err:
             raise BaseManagerGetError(err) from err
 
@@ -225,7 +220,7 @@ class BaseManager:
             Cursor: A cursor that points to the result set of the 'find' operation
         """
         try:
-            return self.dbm.find(self.collection, *args, **kwargs)
+            return self.dbm.find(self.collection, self.db_name, *args, **kwargs)
         except DocumentGetError as err:
             raise BaseManagerGetError(err) from err
 
@@ -274,7 +269,7 @@ class BaseManager:
             if criteria is None:
                 criteria = {}
 
-            return self.dbm.find(collection=self.collection, filter=criteria, *args, **kwargs)
+            return self.dbm.find(collection=self.collection, db_name=self.db_name, filter=criteria, *args, **kwargs)
         except DocumentGetError as err:
             raise BaseManagerGetError(err) from err
 
@@ -295,7 +290,7 @@ class BaseManager:
         try:
             target_collection = collection or self.collection
 
-            return self.dbm.find_one_by(target_collection, criteria)
+            return self.dbm.find_one_by(target_collection, self.db_name, criteria)
         except DocumentGetError as err:
             raise BaseManagerGetError(err) from err
 
@@ -326,6 +321,7 @@ class BaseManager:
             formatted_sort = [(sort, direction)]
 
             return self.dbm.find_all(collection=self.collection,
+                                     db_name=self.db_name,
                                     limit=limit,
                                     filter=requirements_filter,
                                     sort=formatted_sort)
@@ -348,7 +344,7 @@ class BaseManager:
             CommandCursor: A cursor that can be iterated over to access the aggregation results
         """
         try:
-            return self.dbm.aggregate(self.collection, *args, **kwargs)
+            return self.dbm.aggregate(self.collection, self.db_name, *args, **kwargs)
         except DocumentAggregationError as err:
             raise BaseManagerIterationError(err) from err
 
@@ -369,7 +365,7 @@ class BaseManager:
             CommandCursor: A cursor that can be iterated over to access the aggregation results
         """
         try:
-            return self.dbm.aggregate(collection, *args, **kwargs)
+            return self.dbm.aggregate(collection, self.db_name, *args, **kwargs)
         except DocumentAggregationError as err:
             raise BaseManagerIterationError(err) from err
 
@@ -385,7 +381,7 @@ class BaseManager:
             int: The next public_id for the collection
         """
         try:
-            return self.dbm.get_next_public_id(self.collection)
+            return self.dbm.get_next_public_id(self.collection, self.db_name)
         except DocumentGetError as err:
             raise BaseManagerGetError(err) from err
 
@@ -406,13 +402,19 @@ class BaseManager:
             int: The number of documents that match the given criteria
         """
         try:
-            return self.dbm.count(collection, *args, **kwargs)
+            return self.dbm.count(collection, self.db_name, *args, **kwargs)
         except DocumentGetError as err:
             raise BaseManagerGetError(err) from err
 
 # --------------------------------------------------- CRUD - UPDATE -------------------------------------------------- #
 
-    def update(self, criteria: dict, data: dict, *args, add_to_set: bool = True, **kwargs) -> UpdateResult:
+    def update(self,
+               criteria: dict,
+               data: dict,
+               *args,
+               add_to_set: bool = True,
+               plain: bool = False,
+               **kwargs) -> UpdateResult:
         """
         Updates a document in the database with the specified criteria and new data
 
@@ -422,7 +424,9 @@ class BaseManager:
             *args: Additional positional arguments passed to the update operation
             add_to_set (bool, optional): If True, wraps `data` in `$set` unless the `data` already contains update
                                          operators. Defaults to True
+            plain (bool, optional): If true, then no modification of data
             **kwargs: Additional keyword arguments passed to the update operation
+
 
         Raises:
             BaseManagerUpdateError: If an error occurs during the update operation
@@ -432,12 +436,49 @@ class BaseManager:
                           matched and modified
         """
         try:
-            return self.dbm.update(self.collection, criteria, data, *args, add_to_set, **kwargs)
+            return self.dbm.update(self.collection, self.db_name, criteria, data, *args, add_to_set, plain, **kwargs)
         except DocumentUpdateError as err:
             raise BaseManagerUpdateError(err) from err
 
 
-    def update_many(self, criteria: dict, update: dict, add_to_set: bool = False) -> UpdateResult:
+    def upsert_set(self, data: dict, collection:str = None) -> UpdateResult:
+        """
+        Performs an upsert operation on a specified MongoDB collection.
+
+        This method attempts to update a document in the specified collection (or a default
+        collection if none is provided) by matching the `public_id` field. If the document
+        does not exist, it will insert the document with the provided data.
+
+        Args:
+            data (dict): A dictionary containing the data to be inserted or updated.
+                        The dictionary should contain at least the 'public_id' field
+                        to identify the document.
+            collection (str, optional): The name of the MongoDB collection where the upsert
+                                        operation will be performed. If not provided, the
+                                        method will use the default collection.
+
+        Returns:
+            UpdateResult: The result of the update operation, providing information
+                        about the modified or inserted document.
+
+        Raises:
+            BaseManagerUpdateError: If an error occurs during the upsert operation,
+                                    a custom exception is raised with details about the failure.
+        """
+        try:
+            target_collection = collection if collection else self.collection
+
+            return self.dbm.upsert_set(target_collection, self.db_name, data)
+        except DocumentUpdateError as err:
+            raise BaseManagerUpdateError(err) from err
+
+
+    def update_many(
+            self,
+            criteria: dict,
+            update: dict,
+            add_to_set: bool = False,
+            plain: bool = False) -> UpdateResult:
         """
         Updates multiple documents in the collection that match the given filter
 
@@ -446,6 +487,8 @@ class BaseManager:
             update (dict): A dictionary containing the update operations to be applied
             add_to_set (bool, optional): If True, wraps `update` in '$set' unless it already contains update
                                          operators. Defaults to False
+            plain (bool, optional): If True, sends the update dict as-is without wrapping it in an operator.
+                                    Defaults to False
 
         Raises:
             BaseManagerUpdateError: If the update operation fails
@@ -454,7 +497,7 @@ class BaseManager:
             UpdateResult: The result of the update operation, containing metadata about the operation's success
         """
         try:
-            return self.dbm.update_many(self.collection, criteria, update, add_to_set)
+            return self.dbm.update_many(self.collection, self.db_name, criteria, update, add_to_set, plain)
         except DocumentUpdateError as err:
             raise BaseManagerUpdateError(err) from err
 
@@ -476,7 +519,7 @@ class BaseManager:
             UpdateResult: The result of the update operation, containing metadata about the operation's success
         """
         try:
-            return self.dbm.update_many_pull(self.collection, criteria, update)
+            return self.dbm.update_many_pull(self.collection, self.db_name, criteria, update)
         except DocumentUpdateError as err:
             raise BaseManagerUpdateError(err) from err
 
@@ -501,13 +544,11 @@ class BaseManager:
             if collection:
                 target_collection = collection
 
-            result = self.dbm.delete(target_collection, criteria)
+            result = self.dbm.delete(target_collection, self.db_name, criteria)
 
             return result.acknowledged and result.deleted_count > 0
         except (DocumentDeleteError, Exception) as err:
             raise BaseManagerDeleteError(err) from err
-
-
 
 
     def delete_many(self, filter_query: dict) -> DeleteResult:
@@ -524,6 +565,6 @@ class BaseManager:
             DeleteResult: The result of the delete operation, containing details about the number of deleted documents
         """
         try:
-            return self.dbm.delete_many(collection=self.collection, **filter_query)
+            return self.dbm.delete_many(collection=self.collection, db_name=self.db_name, **filter_query)
         except DocumentDeleteError as err:
             raise BaseManagerDeleteError(err) from err

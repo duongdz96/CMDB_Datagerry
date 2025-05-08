@@ -18,7 +18,7 @@ This package contains all errors of the system config file
 """
 from .system_config_errors import (
     ConfigFileError,
-    ConfigFileSetError,
+    ConfigFileModificationError,
     ConfigFileNotFound,
     ConfigNotLoaded,
     SectionError,
@@ -27,7 +27,7 @@ from .system_config_errors import (
 
 __all__ = [
     'ConfigFileError',
-    'ConfigFileSetError',
+    'ConfigFileModificationError',
     'ConfigFileNotFound',
     'ConfigNotLoaded',
     'SectionError',

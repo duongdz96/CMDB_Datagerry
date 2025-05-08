@@ -29,7 +29,7 @@ from bson.json_util import dumps
 from flask import current_app
 
 from cmdb.database import MongoDatabaseManager
-from cmdb.manager.system_manager.settings_manager import SettingsManager #TODO: IMPORT-FIX(circular)
+from cmdb.manager.system_manager.settings_manager import SettingsManager
 # -------------------------------------------------------------------------------------------------------------------- #
 
 LOGGER = logging.getLogger(__name__)
@@ -59,10 +59,7 @@ class SecurityManager:
             dbm (MongoDatabaseManager): The database manager to interact with the database
             database (str, optional): The database name to use. Defaults to None
         """
-        if database:
-            dbm.connector.set_database(database)
-
-        self.settings_manager = SettingsManager(dbm)
+        self.settings_manager = SettingsManager(dbm, database)
         self.salt = "cmdb"
 
 

@@ -18,6 +18,8 @@ Registration of all REST API Routes for the FlaskApp
 """
 import logging
 import sys
+import copy
+from datetime import datetime, timezone
 from flask_cors import CORS
 
 from cmdb.database import MongoDatabaseManager
@@ -28,6 +30,8 @@ from cmdb.database.database_services import (
 )
 
 import cmdb
+from cmdb.models.object_model.cmdb_object import CmdbObject
+from cmdb.models.type_model.cmdb_type import CmdbType
 from cmdb.interface.cmdb_app import BaseCmdbApp
 from cmdb.interface.config import app_config
 from cmdb.interface.custom_converters import RegexConverter
@@ -59,10 +63,6 @@ def create_rest_api(database_maanger: MongoDatabaseManager) -> BaseCmdbApp:
     Returns:
         BaseCmdbApp: The Flask App
     """
-    # dbm = MongoDatabaseManager(
-    #     **SystemConfigReader().get_all_values_from_section('Database')
-    # )
-
     app = BaseCmdbApp(__name__, database_manager=database_maanger)
     app.url_map.strict_slashes = True
 
@@ -90,11 +90,14 @@ def create_rest_api(database_maanger: MongoDatabaseManager) -> BaseCmdbApp:
 
                 if not cmdb.__CLOUD_MODE__:
                     start_datagerry_setup(database_maanger)
+                    # debug_create_users(1, database_maanger)
+                    # debug_create_types(500, database_maanger)
                 elif not cmdb.__LOCAL_MODE__:
                     # Check for updates in __CLOUD_MODE__
                     execute_update_checks(database_maanger)
                 else:
-                    pass # LOCAL_MODE does not need to run updates
+                    # LOCAL_MODE
+                    execute_update_checks(database_maanger, local_mode=True)
             except Exception as err:
                 LOGGER.error(
                     "Initialisation of DataGerry failed. Exception: %s. Type: %s", err, type(err), exc_info=True
@@ -174,6 +177,7 @@ def register_blueprints(app: BaseCmdbApp):
         control_measure_blueprint,
         risk_assessment_blueprint,
         control_measure_assignment_blueprint,
+        isms_report_blueprint,
     )
 
     app.register_blueprint(auth_blueprint, url_prefix='/auth')
@@ -227,6 +231,7 @@ def register_blueprints(app: BaseCmdbApp):
     app.register_blueprint(risk_assessment_blueprint, url_prefix='/isms/risk_assessments')
     app.register_blueprint(control_measure_assignment_blueprint, url_prefix='/isms/control_measure_assignments')
     app.register_blueprint(isms_importer_blueprint, url_prefix='/isms/importer')
+    app.register_blueprint(isms_report_blueprint, url_prefix='/isms/reports')
 
     if cmdb.__MODE__ == 'DEBUG':
         from cmdb.interface.rest_api.routes.debug_routes import debug_blueprint
@@ -271,7 +276,7 @@ def start_datagerry_setup(dbm: MongoDatabaseManager) -> None:
         database_updater.run_updates()
 
 
-def execute_update_checks(dbm: MongoDatabaseManager) -> None:
+def execute_update_checks(dbm: MongoDatabaseManager, local_mode: bool = False) -> None:
     """
     Setup of DataGerry and runs database updates
 
@@ -279,7 +284,7 @@ def execute_update_checks(dbm: MongoDatabaseManager) -> None:
         dbm (MongoDatabaseManager): Manager for interaction with database
     """
     # First retrieve all database names
-    db_names = get_db_names_from_service_portal()
+    db_names = get_db_names_from_service_portal(local_mode)
 
     # # Check each database if it is up to date
     for db_name in db_names:
@@ -290,3 +295,106 @@ def execute_update_checks(dbm: MongoDatabaseManager) -> None:
 
         if database_updater.is_update_available():
             database_updater.run_updates()
+
+
+def debug_create_users(amount: int, dbm: MongoDatabaseManager) -> None:
+    """
+    Debug method to create many objects
+
+    Args:
+        amount (int): How many objects should be created
+    """
+    user_dummy_data = {
+        "type_id": 2,
+        "author_id": 1,
+        "last_edit_time": None,
+        "editor_id": None,
+        "active": True,
+        "fields": [
+            {
+                "name": "text-45910",
+                "value": "TestUser"
+            },
+            {
+                "name": "text-80103",
+                "value": ""
+            },
+            {
+                "name": "text-75307",
+                "value": ""
+            },
+            {
+                "name": "text-93543",
+                "value": ""
+            },
+            {
+                "name": "text-16313",
+                "value": ""
+            }
+        ],
+        "multi_data_sections": []
+    }
+
+    for i in range(amount):
+        user_data = copy.deepcopy(user_dummy_data)
+        user_data["fields"][0]["value"] = f"TestUser{i}"  # Make the username unique
+        dbm.insert(CmdbObject.COLLECTION, user_data)
+
+
+def debug_create_types(amount: int, dbm: MongoDatabaseManager) -> None:
+    """
+    Debug method to create many types
+
+    Args:
+        amount (int): How many types should be created
+    """
+    type_dummy_data = {
+        "global_template_ids": [],
+        "fields": [
+            {
+            "type": "text",
+            "name": "text-09f3e7c6-77ba-45ce-9260-6017fac7f060",
+            "label": "Text Field"
+            }
+        ],
+        "active": True,
+        "version": "1.0.0",
+        "author_id": 1,
+        "render_meta": {
+            "icon": "fa fa-cube",
+            "sections": [
+            {
+                "fields": [
+                    "text-09f3e7c6-77ba-45ce-9260-6017fac7f060"
+                ],
+                "type": "section",
+                "name": "section-97ff6f73-b833-4f29-b7c3-0ec0403378f2",
+                "label": "Section"
+            }
+            ],
+            "externals": [],
+            "summary": {
+            "fields": []
+            }
+        },
+        "acl": {
+            "activated": False
+        },
+        "name": "test",
+        "label": "Test1",
+        "selectable_as_parent": True,
+        "creation_time": None
+    }
+
+    for i in range(amount):
+        type_data = copy.deepcopy(type_dummy_data)
+
+        # Append i to relevant fields
+        type_data["name"] += str(i)
+        type_data["label"] += str(i)
+        type_data["fields"][0]["name"] += str(i)
+        type_data["render_meta"]["sections"][0]["fields"][0] += str(i)
+        type_data["render_meta"]["sections"][0]["name"] += str(i)
+        type_data["creation_time"] = datetime.now(timezone.utc)
+
+        dbm.insert(CmdbType.COLLECTION, type_data)

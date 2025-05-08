@@ -45,7 +45,7 @@ from cmdb.errors.manager.users_manager import UsersManagerGetError
 from cmdb.errors.manager.types_manager import (
     TypesManagerGetError,
 )
-from cmdb.errors.models.cmdb_object import CmdbObjectInitFromDataError
+
 from cmdb.errors.security import AccessDeniedError
 from cmdb.errors.render import ObjectInstanceError, TypeInstanceError, InstanceRenderError
 from cmdb.errors.models.cmdb_type import (
@@ -280,7 +280,6 @@ class CmdbRender:
         try:
             author_name = self.users_manager.get_user(self.type_instance.author_id).get_display_name()
         except UsersManagerGetError:
-            #TODO: ERROR-FIX
             author_name = CmdbRender.AUTHOR_ANONYMOUS_NAME
 
         try:
@@ -430,8 +429,7 @@ class CmdbRender:
                                     'summaries': []
                                 }
 
-                    except (ValueError, IndexError, FileNotFoundError, CmdbObjectInitFromDataError,
-                            ObjectsManagerGetError, CmdbTypeFieldNotFoundError):
+                    except Exception:
                         field['value'] = None
 
                     field_map.append(field)
@@ -441,8 +439,7 @@ class CmdbRender:
                     ref_field_name: str = f'{section.name}-field'
                     ref_field = self.type_instance.get_field(ref_field_name)
                 except CmdbTypeFieldNotFoundError as err:
-                    #TODO: ERROR-FIX
-                    LOGGER.debug("%s",err)
+                    LOGGER.debug("[__merge_fields_value] CmdbTypeFieldNotFoundError: %s", err)
                     continue
 
                 try:
@@ -450,7 +447,7 @@ class CmdbRender:
                     ref_field['value'] = reference_id
                     reference_object: dict = self.objects_manager.get_object(reference_id)
                     reference_object = CmdbObject.from_data(reference_object)
-                except (ObjectsManagerGetError, ValueError, KeyError):
+                except Exception:
                     reference_object = None
 
                 try:
@@ -464,13 +461,13 @@ class CmdbRender:
                         'type_icon': ref_type.get_icon(),
                         'fields': []
                     }
-                except (BaseManagerGetError, TypesManagerGetError, Exception) as err:
-                    #TODO: ERROR-FIX
+                except Exception as err:
                     LOGGER.debug("%s",err)
                     continue
 
                 if not ref_section:
                     continue
+
                 if not section.reference.selected_fields or len(section.reference.selected_fields) == 0:
                     selected_ref_fields = ref_section.fields
                     section.reference.selected_fields = selected_ref_fields
@@ -578,7 +575,6 @@ class CmdbRender:
                 try:
                     _nested_summary_fields = ref_type.get_nested_summary_fields(_nested_summaries)
                 except CmdbTypeFieldNotFoundError as error:
-                    #TODO: ERROR-FIX
                     LOGGER.warning('Summary setting refers to non-existent field(s), Error %s',error)
 
                 reference.type_id = ref_type.get_public_id()
@@ -702,7 +698,6 @@ class CmdbRender:
                                 raise ValueError(ext_link_field)
                             field_list.append(field_value)
                         except Exception:
-                            #TODO: ERROR-FIX
                             # if error append missing data
                             missing_list.append(ext_link_instance)
                 if len(missing_list) > 0:
@@ -713,8 +708,8 @@ class CmdbRender:
                 except ValueError:
                     continue
             except Exception:
-                #TODO: ERROR-FIX
                 continue
+
             external_list.append(TypeExternalLink.to_json(ext_link_instance))
             render_result.externals = external_list
 
